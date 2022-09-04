@@ -1,0 +1,1 @@
+select count(*), avg(abalance) from pgbench_accounts;
