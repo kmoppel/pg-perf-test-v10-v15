@@ -5,11 +5,11 @@ set -e
 PGHOST_TESTDB=127.0.0.1
 PGPORT_TESTDB=6666
 PGDATABASE_TESTDB=postgres
-PGUSER_TESTDB=postgres
+PGUSER_TESTDB=$USER
 PGPASSWORD_TESTDB=postgres
 CONNSTR_TESTDB="postgresql://${PGUSER_TESTDB}:${PGPASSWORD_TESTDB}@${PGHOST_TESTDB}:${PGPORT_TESTDB}/${PGDATABASE_TESTDB}"  # instances will be initialized
-CONNSTR_RESULTSDB="postgresql://postgres:somepass@somehost:5432/resultsdb" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
-EXEC_ENV=gcp
+CONNSTR_RESULTSDB="postgresql://postgres@localhost:5432/resultsdb" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
+EXEC_ENV=hw
 
 # paths to Postgres installations to include into testing
 declare -a BINDIRS
@@ -17,14 +17,6 @@ declare -a PGVER_MAJORS
 
 BINDIRS+=("/usr/lib/postgresql/10/bin")
 PGVER_MAJORS+=("10")
-BINDIRS+=("/usr/lib/postgresql/11/bin")
-PGVER_MAJORS+=("11")
-BINDIRS+=("/usr/lib/postgresql/12/bin")
-PGVER_MAJORS+=("12")
-BINDIRS+=("/usr/lib/postgresql/13/bin")
-PGVER_MAJORS+=("13")
-BINDIRS+=("/usr/lib/postgresql/14/bin")
-PGVER_MAJORS+=("14")
 BINDIRS+=("/usr/lib/postgresql/15/bin")
 PGVER_MAJORS+=("15")
 
@@ -32,30 +24,32 @@ PGVER_MAJORS+=("15")
 PGBENCH=/usr/lib/postgresql/14/bin/pgbench
 
 
-REMOVE_INSTANCES=1  # if 1 then 'rm -rf' each test instance besides the last after testing. set to 1 if low on disk
+REMOVE_INSTANCES=0  # if 1 then 'rm -rf' each test instance besides the last after testing. set to 1 if low on disk
 DATADIR=/tmp/pgbench_testset
+#DATADIR=/hdd/pgbench_testset
 mkdir -p $DATADIR
 
-PGBENCH_SCALES="200 750 1250" # ~3 GB (Shared buffers) / 11 GB (RAM) / 18 GB (some light disk access, assuming 16GB RAM) DB size
+PGBENCH_SCALES="5000" # ~3 GB (Shared buffers) / 11 GB (RAM) / 18 GB (some light disk access, assuming 16GB RAM) DB size
                               # Note though that we increase that by ~ 30% with a reduced pgbench_accounts clone to be able to test JOIN
 #PGBENCH_SCALES="1"
 PGBENCH_INIT_FLAGS="--foreign-keys -q"
-PGBENCH_CLIENTS=2
+PGBENCH_CLIENTS=4
 PGBENCH_DURATION=3600
-PGBENCH_CACHE_WARMUP_DURATION=300
-PROTOCOLS="simple prepared" # pgbench --protocol flag
+PGBENCH_DURATION=604800 # 7d
+PGBENCH_CACHE_WARMUP_DURATION=1800
+PROTOCOLS="prepared" # pgbench --protocol flag
 
 declare -a QUERY_MODES
 declare -a QUERY_FLAGS
 
 #QUERY_MODES+=("select-only") # covered by --skip-some-updates actually
 #QUERY_FLAGS+=("--select-only")
-QUERY_MODES+=("avg-acc-balance")
-QUERY_FLAGS+=("-f sql-avg-acc-balance.sql")
-QUERY_MODES+=("top-5-balances-per-branch") # assumes: create index pgbench_accounts_bid_idx on pgbench_accounts(bid);
-QUERY_FLAGS+=("-f sql-top-5-balances-per-branch.sql")
-QUERY_MODES+=("join-on-reduced-accounts") # assumes: pgbench_accounts_reduced table + index
-QUERY_FLAGS+=("-f sql-join-on-reduced-accounts.sql")
+#QUERY_MODES+=("avg-acc-balance")
+#QUERY_FLAGS+=("-f sql-avg-acc-balance.sql")
+#QUERY_MODES+=("top-5-balances-per-branch") # assumes: create index pgbench_accounts_bid_idx on pgbench_accounts(bid);
+#QUERY_FLAGS+=("-f sql-top-5-balances-per-branch.sql")
+#QUERY_MODES+=("join-on-reduced-accounts") # assumes: pgbench_accounts_reduced table + index
+#QUERY_FLAGS+=("-f sql-join-on-reduced-accounts.sql")
 QUERY_MODES+=("skip-some-updates")
 QUERY_FLAGS+=("--skip-some-updates") # should be last as changes initialized data and makes things more undeterministic
 
@@ -128,23 +122,23 @@ echo "Creating an extra index on pgbench_accounts..."
 echo "create index pgbench_accounts_bid_idx on pgbench_accounts(bid); ..."
 exec_sql "create index pgbench_accounts_bid_idx on pgbench_accounts(bid);"
 
-echo "Creating a reduced copy of pgbench_accounts..."
-echo "drop table if exists pgbench_accounts_reduced;"
-exec_sql "drop table if exists pgbench_accounts_reduced;"
-echo "create table pgbench_accounts_reduced as select * from pgbench_accounts where aid % 4 = 0 order by aid;"
-exec_sql "create table pgbench_accounts_reduced as select * from pgbench_accounts where aid % 4 = 0 order by aid;"
+# echo "Creating a reduced copy of pgbench_accounts..."
+# echo "drop table if exists pgbench_accounts_reduced;"
+# exec_sql "drop table if exists pgbench_accounts_reduced;"
+# echo "create table pgbench_accounts_reduced as select * from pgbench_accounts where aid % 4 = 0 order by aid;"
+# exec_sql "create table pgbench_accounts_reduced as select * from pgbench_accounts where aid % 4 = 0 order by aid;"
 
-echo "vacuum analyze pgbench_accounts_reduced;"
-exec_sql "vacuum analyze pgbench_accounts_reduced;"
+# echo "vacuum analyze pgbench_accounts_reduced;"
+# exec_sql "vacuum analyze pgbench_accounts_reduced;"
 
-echo "create unique index on pgbench_accounts_reduced (aid);"
-exec_sql "create unique index on pgbench_accounts_reduced (aid);"
+# echo "create unique index on pgbench_accounts_reduced (aid);"
+# exec_sql "create unique index on pgbench_accounts_reduced (aid);"
 
-echo "Disabling AUTOVACUUM for pgbench_accounts_reduced to reduce background randomness..." # NB! Not suitable for very long-running tests
-exec_sql "alter table pgbench_accounts_reduced set (autovacuum_enabled = false);"
+# echo "Disabling AUTOVACUUM for pgbench_accounts_reduced to reduce background randomness..." # NB! Not suitable for very long-running tests
+# exec_sql "alter table pgbench_accounts_reduced set (autovacuum_enabled = false);"
 
-echo "Disabling AUTOVACUUM for pgbench_accounts to reduce background randomness..." # NB! Not suitable for very long-running tests
-exec_sql "alter table pgbench_accounts set (autovacuum_enabled = false);"
+# echo "Disabling AUTOVACUUM for pgbench_accounts to reduce background randomness..." # NB! Not suitable for very long-running tests
+# exec_sql "alter table pgbench_accounts set (autovacuum_enabled = false);"
 
 j=0
 for QUERY_MODE in "${QUERY_MODES[@]}" ; do
