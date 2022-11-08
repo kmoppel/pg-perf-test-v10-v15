@@ -166,7 +166,7 @@ echo "Done with SCALE $SCALE"
 done # SCALE
 
 echo "Storing DB and table stats ..."
-psql "$CONNSTR_TESTDB" -Xe -f after_run_summary.sql &> "$LOGDIR/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_q_${QUERY_MODE}.log"
+psql "$CONNSTR_TESTDB" -Xe -f after_run_get_summary.sql &> "$LOGDIR/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_q_${QUERY_MODE}.log"
 
 echo "$BINDIR/pg_ctl --wait -t 300 -D ${DATADIR}/pg${PGVER_MAJOR} stop"
 $BINDIR/pg_ctl --wait -t 300 -D ${DATADIR}/pg${PGVER_MAJOR} stop
