@@ -1,1 +1,0 @@
-select count(*) from pgbench_accounts join pgbench_accounts_reduced using (aid);

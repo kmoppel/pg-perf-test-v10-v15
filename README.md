@@ -1,2 +1,3 @@
 # pg-perf-test-v10-v15
-Create GCP VMs and run some queries
+
+Run pgbench --skip-some 1B TX on v10 and v15
