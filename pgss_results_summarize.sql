@@ -1,10 +1,13 @@
 select
+    query_mode,
     pgver,
-    avg(mean_exec_time) mean_exec_time,
-    avg(exec_ch) exec_ch,
-    avg(stddev_exec_time) stddev_exec_time,
-    avg(stddev_ch) stddev_ch,
-    query
+    avg(mean_exec_time)::numeric(9,3) mean_exec_time,
+    avg(exec_ch)::numeric(9,1) exec_ch,
+    avg(stddev_exec_time)::numeric(9,3) stddev_exec_time,
+    avg(stddev_ch)::numeric(9,1) stddev_ch,
+    (avg(calls)/1000)::numeric(9,1) calls_1k,
+    avg(calls_ch) numeric(9,1) calls_1k,
+    -- query
 from (
 
 select
@@ -19,8 +22,8 @@ select
   (100.0 * (mean_exec_time - mean_exec_time_lag) / mean_exec_time_lag)::numeric(9,2) as exec_ch,
   stddev_exec_time,
   (100.0 * (stddev_exec_time - stddev_exec_time_lag) / stddev_exec_time_lag)::numeric(9,2) as stddev_ch,
-  --calls,
-  --(100.0 * (calls - calls_first) / calls_first)::numeric(8,1) as calls_ch,
+  calls,
+  (100.0 * (calls - calls_first) / calls_first)::numeric(8,1) as calls_ch,
   --rows,
   --(100.0 * (rows - rows_lag) / rows_lag)::numeric(8,1) as rows_ch,
   sb_hit_ratio,
@@ -55,6 +58,6 @@ select
 ) x
 order by query_mode, scale, clients, protocol, query, hostname, pgver
 ) y
-group by query, pgver
-order by query, pgver
+group by query_mode, pgver
+order by query_mode, pgver
 ;

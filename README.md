@@ -1,3 +1,9 @@
-# pg-perf-test-v10-v15
+# pg-perf-test
 
-Run pgbench --skip-some 1B TX on v10 and v15
+Runs 5 pgbench based tests for various Postgres version / pgbench scale / partition count configs:
+
+* Key reads
+* Batched (10k) Key reads
+* Full scans
+* Key updates 
+* Batched (10k) Key updates 
