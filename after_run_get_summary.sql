@@ -20,6 +20,6 @@ select pg_size_pretty(pg_total_relation_size(indexrelid)) as total_idx, pg_total
 select * from pg_stat_database where datname = current_database();
 
 create extension if not exists pgstattuple;
-select format($$select * from pgstattuple('%s')$$, relname) from pg_stat_user_tables where relname ~ 'pgbench_accounts_' order by relid \gexec
+select format($$select * from pgstattuple('%s')$$, relname) from pg_class where relname ~ '^pgbench_accounts' and relkind = 'r' order by oid \gexec
 
 select * from pg_stat_statements where query ~* '(SELECT|UPDATE|INSERT).*pgbench' and calls > 10 order by query;

@@ -8,7 +8,7 @@ PGDATABASE_TESTDB=postgres
 PGUSER_TESTDB=$USER
 PGPASSWORD_TESTDB=postgres
 CONNSTR_TESTDB="postgresql://${PGUSER_TESTDB}:${PGPASSWORD_TESTDB}@${PGHOST_TESTDB}:${PGPORT_TESTDB}/${PGDATABASE_TESTDB}"  # instances will be initialized
-CONNSTR_RESULTSDB="postgresql://postgres@localhost:5431/resultsdb" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
+CONNSTR_RESULTSDB="postgresql://postgres@localhost:5432/resultsdb" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
 EXEC_ENV=local
 
 # paths to Postgres installations to include into testing
@@ -30,17 +30,16 @@ mkdir -p $DATADIR
 LOGDIR=${DATADIR}/logs
 mkdir -p $LOGDIR
 
-PGBENCH_SCALES="1000 5000" # In-mem vs light disk access (assuming 16GB RAM)
-PGBENCH_SCALES="500 2500" # In-mem vs light disk access (assuming 16GB RAM)
+PGBENCH_SCALES="800 3000" # In-mem vs light disk access (assuming 16GB RAM)
 PGBENCH_INIT_FLAGS="--foreign-keys -q --fillfactor 85"
 PGBENCH_CLIENTS=4 # For localhost testing no point to set higher than CPUs
 PGBENCH_JOBS=1
-PGBENCH_DURATION=7200
+PGBENCH_DURATION=14400
 PGBENCH_CACHE_WARMUP_DURATION=60 # Do some random reads before each test
 PROTOCOL="simple" # simple|extended|prepared
-PGBENCH_PARTITIONS="0 16"
+PGBENCH_PARTITIONS="0 16 128"
 DISABLE_AUTOVACUUM=1 # To reduce randomness. Should combine with a bit of fillfactor in init flags to reduce write tx degradation for long test runs
-CREATE_EXTRA_INDEX=1 # Create an additional index on pgbench_account (bid, abalance) to look a bit more "real life"
+CREATE_EXTRA_INDEX=1 # Create an additional top-n index on pgbench_account (bid, abalance) to look a bit more "real life". This also effectively disables HOT-updates!
 
 declare -a QUERY_MODES
 declare -a QUERY_FLAGS
@@ -63,7 +62,7 @@ QUERY_FLAGS+=("-f batch_update.sql")
 CLIENTS_DIVISOR+=(2)
 
 SQL_PGSS_SETUP="CREATE EXTENSION IF NOT EXISTS pg_stat_statements SCHEMA public;"
-SQL_PGSS_RESULTSDB_SETUP="CREATE TABLE IF NOT EXISTS public.pgss_results AS SELECT ''::text AS exec_env, now() AS test_start_time, ''::text AS hostname, now() AS created_on, 0::numeric AS pgver, 0 as pgminor, 0 AS scale, 0 AS duration, 0 AS clients, ''::text AS protocol, ''::text AS query_mode, mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query FROM public.pg_stat_statements WHERE false;"
+SQL_PGSS_RESULTSDB_SETUP="CREATE TABLE IF NOT EXISTS public.pgss_results AS SELECT ''::text AS exec_env, now() AS test_start_time, ''::text AS hostname, now() AS created_on, 0::numeric AS pgver, 0 as pgminor, 0 AS scale, 0 as partitions, 0 AS duration, 0 AS clients, ''::text AS protocol, ''::text AS query_mode, mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query FROM public.pg_stat_statements WHERE false;"
 SQL_PGSS_RESET="SELECT public.pg_stat_statements_reset();"
 SQL_PGSTATS_RESET="SELECT pg_stat_reset();"
 SQL_DISABLE_AUTOVACUUM_PART=$(cat <<- "EOF"
@@ -189,11 +188,11 @@ for QUERY_MODE in "${QUERY_MODES[@]}" ; do
   echo "Storing pg_stat_statements results into resultsdb public.pgss_results ..."
 
   if [ "$SERVER_VERSION_NUM" -ge "130000" ] ; then
-    echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
-    psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
+    echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
+    psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
   else
-    echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_time, stddev_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
-    psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_time, stddev_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
+    echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_time, stddev_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
+    psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_time, stddev_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
   fi
 
   j=$((j+1))
