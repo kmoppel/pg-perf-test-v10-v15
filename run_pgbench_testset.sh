@@ -7,62 +7,100 @@ PGPORT_TESTDB=6666
 PGDATABASE_TESTDB=postgres
 PGUSER_TESTDB=$USER
 PGPASSWORD_TESTDB=postgres
-CONNSTR_TESTDB="postgresql://${PGUSER_TESTDB}:${PGPASSWORD_TESTDB}@${PGHOST_TESTDB}:${PGPORT_TESTDB}/${PGDATABASE_TESTDB}"  # instances will be initialized
-CONNSTR_RESULTSDB="postgresql://postgres@localhost:5432/resultsdb" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
+CONNSTR_TESTDB="postgresql://${PGUSER_TESTDB}:${PGPASSWORD_TESTDB}@${PGHOST_TESTDB}:${PGPORT_TESTDB}/${PGDATABASE_TESTDB}?sslmode=disable"  # instances will be initialized
+CONNSTR_RESULTSDB="postgresql://postgres@localhost:5432/resultsdb?sslmode=disable" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
 EXEC_ENV=local
 
 # paths to Postgres installations to include into testing
 declare -a BINDIRS
 declare -a PGVER_MAJORS
 
-BINDIRS+=("/usr/lib/postgresql/15/bin")
-PGVER_MAJORS+=("15")
-BINDIRS+=("/usr/lib/postgresql/16/bin")
-PGVER_MAJORS+=("16")
+BINDIRS+=("/usr/lib/postgresql/18/bin")
+PGVER_MAJORS+=("18")
+BINDIRS+=("/usr/lib/postgresql/19/bin")
+PGVER_MAJORS+=("19")
 
 
-PGBENCH=/usr/lib/postgresql/15/bin/pgbench
+PGBENCH=/usr/lib/postgresql/18/bin/pgbench
 
 
-REMOVE_INSTANCES=0  # if 1 then 'rm -rf' each test instance DATADIR before the next major version (in case low on disk)
+REMOVE_INSTANCES=1  # if set then 'rm -rf' each test instance DATADIR at end of test run (in case low on disk)
 DATADIR=$HOME/pgbench_testset
 mkdir -p $DATADIR
-LOGDIR=${DATADIR}/logs
+LOGDIR=./logs
 mkdir -p $LOGDIR
 
-PGBENCH_SCALES="800 3000" # In-mem vs light disk access (assuming 16GB RAM)
-PGBENCH_INIT_FLAGS="--foreign-keys -q --fillfactor 85"
-PGBENCH_CLIENTS=4 # For localhost testing no point to set higher than CPUs
-PGBENCH_JOBS=1
-PGBENCH_DURATION=14400
-PGBENCH_CACHE_WARMUP_DURATION=60 # Do some random reads before each test
-PROTOCOL="simple" # simple|extended|prepared
-PGBENCH_PARTITIONS="0 16 128"
+PGBENCH_SCALES="800 1200" # In-mem vs light disk access (assuming 16GB RAM)
+                          # scale 800 ~ 14 GB with FF80
+                          # scale 1200 ~ 21 GB with FF80
+PGBENCH_INIT_FLAGS="--foreign-keys -q --fillfactor 80"
+PGBENCH_PROTOCOLS="simple prepared" # simple|extended|prepared
+PGBENCH_PARTITIONS="0 32"
+TEST_LOOPS=3 # To try to offset the effects of first pg version benefitting from a more better thermal / scaling / SSD trim situation
 DISABLE_AUTOVACUUM=1 # To reduce randomness. Should combine with a bit of fillfactor in init flags to reduce write tx degradation for long test runs
-CREATE_EXTRA_INDEX=1 # Create an additional top-n index on pgbench_account (bid, abalance) to look a bit more "real life". This also effectively disables HOT-updates!
+CREATE_EXTRA_INDEX=1 # Create an additional index on pgbench_account (bid) to look a bit more "real life"
+SLEEP_BETWEEN_RUNS=300 # To ease monitoring + possibly offset CPU "turbo" mode effects, favouring 1st tests
+SLEEP_BETWEEN_RUNS=3
+
+
+CPUS=`nproc`
+PGBENCH_JOBS=1  # Should increase for heavy CPU count test nodes
+if [ $CPUS -gt 8 ] ; then
+  PGBENCH_JOBS=$(( CPUS/8 ))
+fi
+
+if curl -s -m 2 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null | grep -q "^i-"; then
+  echo "Running on EC2"
+  EXEC_ENV=aws
+fi
 
 declare -a QUERY_MODES
 declare -a QUERY_FLAGS
-declare -a CLIENTS_DIVISOR # Increase for heavier queries to reduce the client count / parallel load. clients = PGBENCH_CLIENTS / divisor
+declare -a CLIENTS # Aim to reduce parallel sessions for heavier queries that spawn workers, to avoid abnormal context switching
+declare -a TRANSACTIONS # Use a fixed TX count as distorts overall picture less compared to time-based testing
+                        # NB! Note TX are multiplied by clients
+
 
 QUERY_MODES+=("select-only")
 QUERY_FLAGS+=("--select-only")
-CLIENTS_DIVISOR+=(1)
+if [ $PGBENCH_JOBS -gt 1 ] ; then
+  CLIENTS+=("$((CPUS-PGBENCH_JOBS))")
+else
+  CLIENTS+=("$CPUS")
+fi
+TRANSACTIONS+=(4000000) # 5m
+#TRANSACTIONS+=(10)
+
 QUERY_MODES+=("select-only-batch")
 QUERY_FLAGS+=("-f batch_read.sql")
-CLIENTS_DIVISOR+=(2)
+CLIENTS+=("$((CPUS/2-PGBENCH_JOBS))")
+TRANSACTIONS+=(1000000) # 1m
+#TRANSACTIONS+=(10)
+
 QUERY_MODES+=("full-scan")
 QUERY_FLAGS+=("-f full_scan.sql")
-CLIENTS_DIVISOR+=(2)
+CLIENTS+=("$((CPUS/2-PGBENCH_JOBS))")
+TRANSACTIONS+=(1000) # 1k
+#TRANSACTIONS+=(10)
+
 QUERY_MODES+=("skip-some-updates")
 QUERY_FLAGS+=("--skip-some-updates")
-CLIENTS_DIVISOR+=(1)
-QUERY_MODES+=("skip-some-updates-batch")
-QUERY_FLAGS+=("-f batch_update.sql")
-CLIENTS_DIVISOR+=(2)
+if [ $PGBENCH_JOBS -gt 1 ] ; then
+  CLIENTS+=("$((CPUS-PGBENCH_JOBS))")
+else
+  CLIENTS+=("$CPUS")
+fi
+TRANSACTIONS+=(2000000) # 2m
+#TRANSACTIONS+=(10)
+
+echo "${QUERY_MODES[@]}"
+echo "${QUERY_FLAGS[@]}"
+echo "${CLIENTS[@]}"
+echo "${TRANSACTIONS[@]}"
+
 
 SQL_PGSS_SETUP="CREATE EXTENSION IF NOT EXISTS pg_stat_statements SCHEMA public;"
-SQL_PGSS_RESULTSDB_SETUP="CREATE TABLE IF NOT EXISTS public.pgss_results AS SELECT ''::text AS exec_env, now() AS test_start_time, ''::text AS hostname, now() AS created_on, 0::numeric AS pgver, 0 as pgminor, 0 AS scale, 0 as partitions, 0 AS duration, 0 AS clients, ''::text AS protocol, ''::text AS query_mode, mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query FROM public.pg_stat_statements WHERE false;"
+SQL_PGSS_RESULTSDB_SETUP="CREATE TABLE IF NOT EXISTS public.pgss_results AS SELECT ''::text AS exec_env, now() AS test_start_time, ''::text AS hostname, now() AS created_on, 0::int as loop_count, 0::numeric AS pgver, 0 as pgminor, 0 AS scale, 0 as partitions, 0 AS transactions, 0 AS clients, ''::text AS protocol, ''::text AS query_mode, mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, shared_blk_read_time, shared_blk_write_time, query FROM public.pg_stat_statements WHERE false;"
 SQL_PGSS_RESET="SELECT public.pg_stat_statements_reset();"
 SQL_PGSTATS_RESET="SELECT pg_stat_reset();"
 SQL_DISABLE_AUTOVACUUM_PART=$(cat <<- "EOF"
@@ -89,9 +127,6 @@ function exec_sql_resultsdb() {
     psql "$CONNSTR_RESULTSDB" -Xqc "$1"
 }
 
-if [ "$REMOVE_INSTANCES" -gt 0 ]; then
-  rm -rf $DATADIR/pg*
-fi
 
 HOSTNAME=`hostname`
 START_TIME=`date +%s`
@@ -102,6 +137,14 @@ exec_sql_resultsdb "$SQL_PGSS_SETUP"
 exec_sql_resultsdb "$SQL_PGSS_RESULTSDB_SETUP"
 
 
+
+##### TEST_LOOPS
+
+loop_count=0
+for loop_count in $(seq 1 $TEST_LOOPS) ; do
+echo -e "\n\n##################### STARTING TEST LOOP $loop_count\n\n"
+LOOP_START_TIME=$(date +%s)
+
 ### Loop over all postgres versions, creating instances one by one, applying some PG config settings and starting
 
 i=0
@@ -110,10 +153,18 @@ PGVER_MAJOR=${PGVER_MAJORS[i]}
 
 echo -e "\n\n\n################ Initializing PGVER $PGVER_MAJOR ################\n"
 
+if [ -e ${DATADIR}/pg${PGVER_MAJOR} ]; then
+  echo "Cleaning possible prev state ..."
+  set +e
+  $BINDIR/pg_ctl --wait --log ${LOGDIR}/postgresql_${PGVER_MAJOR}.log -D ${DATADIR}/pg${PGVER_MAJOR} stop
+  set -e
+  rm -rf ${DATADIR}/pg${PGVER_MAJOR}
+fi
+
 echo "$BINDIR/initdb --auth=trust --data-checksums --username=$PGUSER_TESTDB $DATADIR/pg${PGVER_MAJOR}  >/dev/null"
 $BINDIR/initdb --auth=trust --data-checksums --username=$PGUSER_TESTDB ${DATADIR}/pg${PGVER_MAJOR}  >/dev/null
 
-cat postgresql.tune.conf >> ${DATADIR}/pg${PGVER_MAJOR}/postgresql.conf
+cat postgresql.tune.${CPUS}-cpu.conf >> ${DATADIR}/pg${PGVER_MAJOR}/postgresql.conf
 echo "port=${PGPORT_TESTDB}" >> ${DATADIR}/pg${PGVER_MAJOR}/postgresql.conf
 
 echo "$BINDIR/pg_ctl --wait --log ${LOGDIR}/postgresql_${PGVER_MAJOR}.log -D ${DATADIR}/pg${PGVER_MAJOR} start"
@@ -140,10 +191,16 @@ for PARTITIONS in $PGBENCH_PARTITIONS ; do
 
 echo -e "\n*** PARTITIONS $PARTITIONS ***\n"
 
+for PROTOCOL in $PGBENCH_PROTOCOLS ; do
+
+echo -e "\n*** PROTOCOL $PROTOCOL ***\n"
+
 echo "Creating test data using pgbench ..."
 date
 echo "pgbench -i -q $PGBENCH_INIT_FLAGS --partitions $PARTITIONS -s $SCALE \"$CONNSTR_TESTDB\" >/dev/null"
 $PGBENCH -i -q $PGBENCH_INIT_FLAGS --partitions $PARTITIONS -s $SCALE "$CONNSTR_TESTDB" >/dev/null
+echo "Init done. DB size:"
+exec_sql "select pg_size_pretty(pg_database_size(current_database()))"
 
 if [ "$DISABLE_AUTOVACUUM" -gt 0 ]; then
     echo -e "\nDisabling Autovacuum / Autoanalyze on pgbench_accounts ..."
@@ -156,49 +213,45 @@ fi
 date
 
 if [ "$CREATE_EXTRA_INDEX" -gt 0 ]; then
-  echo "Creating an extra index on (bid, abalance)..." # Try to be more close to real life
-  echo "create index pgbench_accounts_bid_abalance_idx on pgbench_accounts(bid, abalance);"
-  exec_sql "create index pgbench_accounts_bid_abalance_idx on pgbench_accounts(bid, abalance);"
+  echo "Creating an extra index on bid ..." # Try to be a bit more closer to real life
+  echo "create index pgbench_accounts_bid_idx on pgbench_accounts(bid);"
+  exec_sql "create index pgbench_accounts_bid_abalance_idx on pgbench_accounts(bid);"
 fi
 
-echo "Reseting pg_stats..."
-exec_sql "$SQL_PGSTATS_RESET" >/dev/null
 
 j=0
 for QUERY_MODE in "${QUERY_MODES[@]}" ; do
   FLAGS=${QUERY_FLAGS[j]}
-  EFFECTIVE_CLIENTS=$((PGBENCH_CLIENTS / CLIENTS_DIVISOR[j]))
-  if [ "$EFFECTIVE_CLIENTS" -eq 0 ]; then
-    EFFECTIVE_CLIENTS=1
-  fi
+  PGBENCH_CLIENTS=${CLIENTS[j]}
+  PGBENCH_TRANSACTIONS=${TRANSACTIONS[j]}
 
   echo -e "\n*** Testing query model: $QUERY_MODE with protocol $PROTOCOL ***\n"
 
-  echo "Doing cache warmup for $PGBENCH_CACHE_WARMUP_DURATION seconds..."
-  echo "pgbench -S -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -T $PGBENCH_CACHE_WARMUP_DURATION \"$CONNSTR_TESTDB\" >/dev/null"
-  $PGBENCH -S -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -T $PGBENCH_CACHE_WARMUP_DURATION "$CONNSTR_TESTDB" >/dev/null
+  echo "VACUUM ANALYZE pgbench_accounts ..."
+  exec_sql "VACUUM ANALYZE pgbench_accounts"
 
   echo "Reseting pg_stat_statements..."
   exec_sql "$SQL_PGSS_RESET" >/dev/null
 
   echo "Running the timed query test"
-  echo "pgbench --random-seed 666 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -T $PGBENCH_DURATION $FLAGS \"$CONNSTR_TESTDB\" &> /tmp/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}.log"
-  $PGBENCH --random-seed 666 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -T $PGBENCH_DURATION $FLAGS "$CONNSTR_TESTDB" &> /tmp/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}.log
+  echo "pgbench --random-seed 666 -P 60 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -t $PGBENCH_TRANSACTIONS $FLAGS \"$CONNSTR_TESTDB\" &> $LOGDIR/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log"
+  $PGBENCH --random-seed 666 -P 60 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -t $PGBENCH_TRANSACTIONS $FLAGS "$CONNSTR_TESTDB" &> $LOGDIR/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log
 
   echo "Storing pg_stat_statements results into resultsdb public.pgss_results ..."
 
-  if [ "$SERVER_VERSION_NUM" -ge "130000" ] ; then
-    echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
-    psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
-  else
-    echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_time, stddev_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
-    psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_DURATION}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_time, stddev_time, calls, rows, shared_blks_hit, shared_blks_read, blk_read_time, blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
-  fi
+  echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), $loop_count, ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_TRANSACTIONS}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, shared_blk_read_time, shared_blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
+  psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${START_TIME_PG}', '${HOSTNAME}', now(), $loop_count, ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_TRANSACTIONS}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, shared_blk_read_time, shared_blk_write_time, query from public.pg_stat_statements where calls > 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
 
   j=$((j+1))
 
+  echo "Sleeping $SLEEP_BETWEEN_RUNS s before test start ..."
+  sleep $SLEEP_BETWEEN_RUNS
+
 echo "Done with QUERY_MODE $QUERY_MODE"
 done # QUERY_MODE
+
+echo "Done with PROTOCOL $PROTOCOL"
+done # PGBENCH_PROTOCOLS
 
 echo "Done with PARTITIONS $PARTITIONS"
 done # PARTITIONS
@@ -206,8 +259,8 @@ done # PARTITIONS
 echo "Done with SCALE $SCALE"
 done # SCALE
 
-echo "Storing DB and table stats to ${LOGDIR}/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_q_${QUERY_MODE}.log ..."
-psql "$CONNSTR_TESTDB" -Xe -f after_run_get_summary.sql &> "${LOGDIR}/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_q_${QUERY_MODE}.log"
+echo "Storing DB and table stats to ${LOGDIR}/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_q_${QUERY_MODE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log ..."
+psql "$CONNSTR_TESTDB" -Xe -f after_run_get_summary.sql &> "${LOGDIR}/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_q_${QUERY_MODE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log"
 
 echo "$BINDIR/pg_ctl --wait -t 300 -D ${DATADIR}/pg${PGVER_MAJOR} stop"
 $BINDIR/pg_ctl --wait -t 300 -D ${DATADIR}/pg${PGVER_MAJOR} stop
@@ -223,5 +276,10 @@ fi
 
 done # BINDIR
 
+LOOP_END_TIME=$(date +%s)
+echo -e "\nLOOP $loop_count DONE in $((LOOP_END_TIME-LOOP_START_TIME)) s\n"
+
+done # LOOP_COUNT
+
 END_TIME=`date +%s`
-echo -e "\nDONE in $((END_TIME-START_TIME)) s"
+echo -e "\n\nSCRIPT DONE in $((END_TIME-START_TIME)) s"

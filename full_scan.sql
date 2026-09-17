@@ -1,1 +1,1 @@
-SELECT max(abalance) FROM pgbench_accounts;
+SELECT bid, max(abalance) FROM pgbench_accounts GROUP BY 1 ORDER BY 1 ;
