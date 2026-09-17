@@ -11,7 +11,7 @@ CONNSTR_TESTDB="postgresql://${PGUSER_TESTDB}:${PGPASSWORD_TESTDB}@${PGHOST_TEST
 CONNSTR_RESULTSDB="postgresql://postgres@localhost:5432/resultsdb?sslmode=disable" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
 EXEC_ENV=local  # "aws" autodetected below
 
-DUMMY_TEST_RUN=1  # If set use very small scale and TX counts just to verify that script is running OK / prereqs are met
+DUMMY_TEST_RUN=0  # If set use very small scale and TX counts just to verify that script is running OK / prereqs are met
 
 # paths to Postgres installations to include into testing
 declare -a BINDIRS
