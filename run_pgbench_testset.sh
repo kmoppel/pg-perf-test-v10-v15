@@ -105,7 +105,7 @@ if [ "$DUMMY_TEST_RUN" -gt 0 ]; then
   PGBENCH_SCALES="1" # In-mem vs light disk access (assuming 16GB RAM)
                           # scale 800 ~ 14 GB with FF80
                           # scale 1200 ~ 21 GB with FF80
-  PGBENCH_INIT_FLAGS="--foreign-keys -q --fillfactor 80 --unlogged"
+  PGBENCH_INIT_FLAGS="--foreign-keys -q --fillfactor 80"
   PGBENCH_PROTOCOLS="simple" # simple|extended|prepared
   PGBENCH_PARTITIONS="0"
   TEST_LOOPS=2 # To try to offset the effects of first pg version benefitting from a more better thermal / scaling / SSD trim situation
