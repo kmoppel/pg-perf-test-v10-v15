@@ -9,10 +9,9 @@ PGUSER_TESTDB=$USER
 PGPASSWORD_TESTDB=postgres
 CONNSTR_TESTDB="postgresql://${PGUSER_TESTDB}:${PGPASSWORD_TESTDB}@${PGHOST_TESTDB}:${PGPORT_TESTDB}/${PGDATABASE_TESTDB}?sslmode=disable"  # instances will be initialized
 CONNSTR_RESULTSDB="postgresql://postgres@localhost:5432/resultsdb?sslmode=disable" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
-CONNSTR_RESULTSDB="postgresql://peakasutaja:Andmebaasiv6ti@resultsdb.cbmgyiu4sv5w.eu-north-1.rds.amazonaws.com:5432/resultsdb?sslmode=require" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
 EXEC_ENV=local  # "aws" autodetected below
 
-DUMMY_TEST_RUN=0  # If set use very small scale and TX counts just to verify that script is running OK / prereqs are met
+DUMMY_TEST_RUN=1  # If set use very small scale and TX counts just to verify that script is running OK / prereqs are met
 
 # paths to Postgres installations to include into testing
 declare -a BINDIRS
@@ -20,9 +19,9 @@ declare -a PGVER_MAJORS
 
 BINDIRS+=("/usr/lib/postgresql/18/bin")
 PGVER_MAJORS+=("18")
-BINDIRS+=("/usr/lib/postgresql/18/bin")
+BINDIRS+=("/usr/lib/postgresql/19/bin")
 #BINDIRS+=("/usr/local/pgsql_19beta3/bin")
-PGVER_MAJORS+=("20")
+PGVER_MAJORS+=("19")
 
 
 PGBENCH=/usr/lib/postgresql/18/bin/pgbench
@@ -301,7 +300,22 @@ for BINDIR in "${BINDIRS[@]}" ; do
     echo "Storing pg_stat_statements results into resultsdb public.pgss_results ..."
 
     echo "psql \"$CONNSTR_TESTDB\" -qXc \"copy (select '${EXEC_ENV}', '${TESTSET_START_TIME_PG}', '${HOSTNAME}', now(), $loop_count, $LOOP_DUR_S, ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_TRANSACTIONS}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, query from public.pg_stat_statements where calls >= 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout\" | psql \"$CONNSTR_RESULTSDB\" -qXc \"copy public.pgss_results from stdin\""
-    psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${TESTSET_START_TIME_PG}', '${HOSTNAME}', now(), $loop_count, $LOOP_DUR_S, ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_TRANSACTIONS}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, query from public.pg_stat_statements where calls >= 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
+    set +e
+    for RESULTSDB_STORE_ATTEMPT in 1 2 ; do
+      psql "$CONNSTR_TESTDB" -qXc "copy (select '${EXEC_ENV}', '${TESTSET_START_TIME_PG}', '${HOSTNAME}', now(), $loop_count, $LOOP_DUR_S, ${PGVER_MAJOR}, ${SERVER_VERSION_NUM}, ${SCALE}, ${PARTITIONS}, ${PGBENCH_TRANSACTIONS}, ${PGBENCH_CLIENTS}, '${PROTOCOL}', '${QUERY_MODE}', mean_exec_time, stddev_exec_time, calls, rows, shared_blks_hit, shared_blks_read, query from public.pg_stat_statements where calls >= 10 and query ~* '(INSERT|UPDATE|SELECT).*pgbench') to stdout" | psql "$CONNSTR_RESULTSDB" -qXc "copy public.pgss_results from stdin"
+      RESULTSDB_STORE_RC=${PIPESTATUS[1]}
+      if [ "$RESULTSDB_STORE_RC" -eq 0 ]; then
+        break
+      fi
+      if [ "$RESULTSDB_STORE_ATTEMPT" -eq 1 ]; then
+        echo "WARNING: Storing results into resultsdb failed, retrying once after 60s ..."
+        sleep 60
+      else
+        echo "ERROR: Storing results into resultsdb failed again after retry."
+        exit 1
+      fi
+    done
+    set -e
 
     echo "Storing DB and table stats to ${LOGDIR}/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_qm_${QUERY_MODE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log ..."
     psql "$CONNSTR_TESTDB" -Xe -f after_run_get_summary.sql &> "${LOGDIR}/after_run_summary_v${PGVER_MAJOR}_scale_${SCALE}_qm_${QUERY_MODE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log"
