@@ -21,7 +21,7 @@ from (
     from (
 
         select
-          test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver,
+          test_start_time, query, query_mode, exec_env, hostname, scale, partitions, clients, protocol, pgver,
           mean_exec_time,
           (100.0 * (mean_exec_time - mean_exec_time_lag) / mean_exec_time_lag)::numeric(9,2) as exec_ch,
           stddev_exec_time,
@@ -31,7 +31,7 @@ from (
         from (
 
           select
-            test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver,
+            test_start_time, query, query_mode, exec_env, hostname, scale, partitions, clients, protocol, sum_loop_dur, pgver,
             mean_exec_time,
             lag(mean_exec_time) over w as mean_exec_time_lag,
             stddev_exec_time,
@@ -41,24 +41,22 @@ from (
 
           from (
             select
-                test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver, count(*) as loops,
+                test_start_time, query::varchar(40), query_mode, exec_env, hostname, scale, partitions, clients, protocol, pgver,
+                count(*) as loops,
+                avg(loop_dur)::int as avg_loop_dur,
+                sum(loop_dur) as sum_loop_dur,
                 avg(mean_exec_time::numeric) as mean_exec_time,
                 avg(stddev_exec_time::numeric) as stddev_exec_time,
                 avg((100.0::numeric * shared_blks_hit / (shared_blks_hit + shared_blks_read))::numeric(8,1)) as sb_hit_ratio
               from
-                -- pgss_results_m8id_xlarge_tpcc
-                pgss_results_agg_bench_sync
-                --pgss_results_aws_c8_800_syncc_upd_only
-                --pgss_results_agg
-              -- where
-              --  test_start_time <> '2026-07-29 13:15:32.52292+03'
+                pgss_results
               group by
-                test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver
+                test_start_time, query_mode, query, exec_env, hostname, scale, partitions, clients, protocol, pgver
               order by
-                test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver
+                test_start_time, query_mode, query, exec_env, hostname, scale, partitions, clients, protocol, pgver
           ) loop_agg
-          window w as (partition by test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol order by pgver)
-          order by test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver
+          window w as (partition by test_start_time, query_mode, query, hostname, scale, partitions, clients, protocol order by pgver)
+          order by test_start_time, query_mode, query, hostname, scale, partitions, clients, protocol, pgver
 
         ) x
 

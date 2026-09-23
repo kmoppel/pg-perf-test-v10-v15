@@ -26,11 +26,11 @@ from (
           stddev_exec_time,
           (100.0 * (stddev_exec_time - stddev_exec_time_lag) / stddev_exec_time_lag)::numeric(9,2) as stddev_ch,
           sb_hit_ratio,
-          (100.0 * (sb_hit_ratio - sb_hit_ratio_lag) / sb_hit_ratio)::numeric(8,1) as sb_hit_ratio_ch
+          case when sb_hit_ratio > 0 then (100.0 * (sb_hit_ratio - sb_hit_ratio_lag) / sb_hit_ratio)::numeric(8,1) else 0 end as sb_hit_ratio_ch
         from (
 
           select
-            test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver,
+            test_start_time, query::varchar(20), query_mode, hostname, scale, partitions, clients, protocol, pgver,
             mean_exec_time,
             lag(mean_exec_time) over w as mean_exec_time_lag,
             stddev_exec_time,
@@ -44,7 +44,7 @@ from (
                 avg(stddev_exec_time::numeric) as stddev_exec_time,
                 avg((100::numeric * shared_blks_hit / (shared_blks_hit + shared_blks_read))::numeric(8,1)) as sb_hit_ratio
               from
-                pgss_results_agg
+                pgss_results
               group by
                 test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver
               order by
@@ -54,9 +54,8 @@ from (
           order by test_start_time, query, query_mode, hostname, scale, partitions, clients, protocol, pgver
 
         ) x
-
+        where mean_exec_time_lag notnull
     ) y
-    where exec_ch notnull
     group by query, query_mode, scale
     order by query, query_mode, scale
 

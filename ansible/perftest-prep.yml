@@ -1,0 +1,106 @@
+---
+# Playbook: provision a Debian host for pg-perf-test-v10-v15
+#
+# 1) Installs rsync + postgresql-19 (adds the "19" component to the
+#    pgdg.sources deb822 file first, since that's required for the
+#    postgresql-19 package to be resolvable).
+# 2) Copies the whole pg-perf-test-v10-v15 project directory to the
+#    remote host, owned by the "postgres" user.
+# 3) Creates a "logs" directory in test "home" i.e. pg-perf-test-v10-v15
+#
+# Usage:
+#   PS! Assuming CWD is Github root for pg-perf-test-v10-v15
+#   ansible-playbook -i $HOST_IP, -u pgspotops ansible/perftest-prep.yml
+#
+- name: Set up host for pg-perf-test-v10-v15 testing under 'postgres' user
+  hosts: all
+  become: true
+  vars:
+    # Path (relative to this playbook, or absolute) to the project folder
+    # to copy to the remote host. Defaults to the sibling checkout
+    # mentioned in the task description.
+    project_src_dir: "../../pg-perf-test-v10-v15"
+    project_dest_dir: "{{ postgres_home }}/pg-perf-test-v10-v15"
+    postgres_home: /var/lib/postgresql
+    pgdg_sources_file: /etc/apt/sources.list.d/pgdg.sources
+
+  tasks:
+    - name: Ensure postgresql-common package is installed
+      ansible.builtin.apt:
+        name: postgresql-common
+        state: present
+        update_cache: true
+
+    - name: Check whether pgdg.sources already exists
+      ansible.builtin.stat:
+        path: "{{ pgdg_sources_file }}"
+      register: pgdg_sources_stat
+
+    - name: Set up Postgres PGDG apt repository
+      ansible.builtin.command: /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+      when: not pgdg_sources_stat.stat.exists
+
+    - name: Ensure the "19" component is present in pgdg.sources
+      ansible.builtin.replace:
+        path: "{{ pgdg_sources_file }}"
+        # Matches a "Components:" line that does not already contain "19"
+        # as a standalone token, and appends " 19" to it.
+        regexp: '^(Components:(?!.*\b19\b).*)$'
+        replace: '\1 19'
+      register: pgdg_components_updated
+
+    - name: Update apt cache after enabling the "19" component
+      ansible.builtin.apt:
+        update_cache: true
+      when: pgdg_components_updated.changed
+
+    - name: Install rsync and to-be-tested PG versions
+      ansible.builtin.apt:
+        name:
+          - rsync
+          - postgresql-18
+          - postgresql-19
+        state: present
+        update_cache: true
+
+    - name: Ensure postgresql service is stopped and disabled
+      ansible.builtin.service:
+        name: postgresql
+        state: stopped
+        enabled: false
+
+    - name: Ensure destination directory exists and is owned by postgres
+      ansible.builtin.file:
+        path: "{{ project_dest_dir }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0755"
+
+    - name: Copy project directory contents to the remote host
+      ansible.posix.synchronize:
+        src: "{{ project_src_dir }}/"
+        dest: "{{ project_dest_dir }}/"
+        recursive: true
+        delete: false
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=logs/"
+          - "--chown=postgres:postgres"
+      become: true
+      become_user: root
+
+    - name: Ensure copied files are owned by postgres (fallback if --chown unsupported)
+      ansible.builtin.file:
+        path: "{{ project_dest_dir }}"
+        owner: postgres
+        group: postgres
+        recurse: true
+
+    - name: Create "log" directory in postgres user's home
+      ansible.builtin.file:
+        path: "{{ project_dest_dir }}/logs"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0755"
