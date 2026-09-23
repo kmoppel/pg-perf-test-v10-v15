@@ -11,7 +11,7 @@ CONNSTR_TESTDB="postgresql://${PGUSER_TESTDB}:${PGPASSWORD_TESTDB}@${PGHOST_TEST
 CONNSTR_RESULTSDB="postgresql://postgres@localhost:5432/resultsdb?sslmode=disable" # assumed existing and >= v13 for storing pg_stat_statement results from test instances
 EXEC_ENV=local  # "aws" autodetected below
 
-DUMMY_TEST_RUN=1  # If set use very small scale and TX counts just to verify that script is running OK / prereqs are met
+DUMMY_TEST_RUN=0  # If set use very small scale and TX counts just to verify that script is running OK / prereqs are met
 
 # paths to Postgres installations to include into testing
 declare -a BINDIRS
@@ -42,7 +42,7 @@ if [ ! -d ./logs ]; then
   mkdir -p $LOGDIR_ROOT
 fi
 
-PGBENCH_SCALES="1000 2500" # In-mem vs light disk access (assuming 16GB RAM)
+PGBENCH_SCALES="800 1200" # In-mem vs light disk access (assuming 16GB RAM)
                           # scale 800 ~ 14 GB with FF80
                           # scale 1200 ~ 21 GB with FF80
                           # NB! Need double the space on test host + some space for table / index growth
@@ -56,7 +56,6 @@ CREATE_EXTRA_INDEX=1 # Create an additional index on pgbench_account (bid) to lo
 SLEEP_BETWEEN_RUNS=300 # To ease monitoring + possibly offset CPU "turbo" mode effects, favouring 1st tests
 
 CPUS=`nproc`
-CPUS=16
 PGBENCH_JOBS=1  # Should increase for heavy CPU count test nodes
 if [ $CPUS -gt 8 ] ; then
   PGBENCH_JOBS=$(( CPUS/8 ))
