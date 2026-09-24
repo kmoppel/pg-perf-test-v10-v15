@@ -61,9 +61,12 @@ if [ $CPUS -gt 8 ] ; then
   PGBENCH_JOBS=$(( CPUS/8 ))
 fi
 
-if curl -s -m 2 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null | grep -q "^i-"; then
+if curl -s -m 1 "http://169.254.169.254/latest/meta-data/instance-id" 2>/dev/null | grep -q "^i-"; then
   echo "Running on EC2"
   EXEC_ENV=aws
+elif curl -s -m 1 "http://169.254.169.254/hetzner/v1/metadata/hostname" &>/dev/null ; then
+  echo "Running on Hetzner"
+  EXEC_ENV=hetzner
 fi
 
 declare -a QUERY_MODES
