@@ -7,13 +7,15 @@ select
   avg(exec_ch)::numeric(9,1) tot_avg_exec_ch,
   avg(stddev_ch)::numeric(9,1) tot_avg_stddev_ch,
   avg(sb_hit_ratio)::numeric(9,1) tot_avg_sb_hit_ratio,
-  avg(sb_hit_ratio_ch)::numeric(9,1) tot_avg_sb_hit_ratio_ch
+  avg(sb_hit_ratio_ch)::numeric(9,1) tot_avg_sb_hit_ratio_ch,
+  sum(sum_loop_dur) as sum_loop_dur
 from (
 
     select
         split_part(query, ' ', 1) as query_type, query_mode, scale,
         avg(mean_exec_time)::numeric(9,3) mean_exec_time,
         avg(exec_ch)::numeric(9,1) exec_ch,
+        sum(sum_loop_dur) as sum_loop_dur,
         avg(stddev_exec_time)::numeric(9,3) stddev_exec_time,
         avg(stddev_ch)::numeric(9,1) stddev_ch,
         avg(sb_hit_ratio)::numeric(9,1) sb_hit_ratio,
@@ -22,6 +24,7 @@ from (
 
         select
           test_start_time, query, query_mode, exec_env, hostname, scale, partitions, clients, protocol, pgver,
+          sum_loop_dur,
           mean_exec_time,
           (100.0 * (mean_exec_time - mean_exec_time_lag) / mean_exec_time_lag)::numeric(9,2) as exec_ch,
           stddev_exec_time,
@@ -62,6 +65,7 @@ from (
 
     ) y
     where exec_ch notnull
+    and abs(exec_ch) < 50  -- blend out clear outliers seen on EC2, more than 50% change
     group by query, query_mode, scale
     order by query, query_mode, scale
 

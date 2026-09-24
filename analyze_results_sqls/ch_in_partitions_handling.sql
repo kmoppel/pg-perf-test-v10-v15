@@ -51,7 +51,7 @@ from (
       ) loop_agg
       where query_mode <> 'tpcc-like'
         /* looking only at runs with various partitions */
-        and exists (select * from pgss_results_agg where test_start_time = loop_agg.test_start_time and partitions > 1)
+        and exists (select * from pgss_results where test_start_time = loop_agg.test_start_time and partitions > 1)
       window w as (partition by test_start_time, query, query_mode, exec_env, hostname, scale, clients, protocol, pgver order by partitions)
       order by
         test_start_time, query, query_mode, exec_env, hostname, scale, clients, protocol, pgver, partitions
@@ -61,6 +61,7 @@ order by query, query_mode, exec_env, hostname, scale, clients, protocol, pgver,
 
 ) y
 where exec_ch notnull
+and abs(exec_ch) < 50  -- blend out clear outliers seen on EC2, more than 50% change
 group by query_mode, query, scale, exec_env, hostname, pgver, partitions
 order by query_mode, query, scale, exec_env, hostname, pgver, partitions
 

@@ -56,6 +56,7 @@ from (
         ) x
         where mean_exec_time_lag notnull
     ) y
+    where abs(exec_ch) < 50  -- blend out clear outliers seen on EC2
     group by query, query_mode, scale
     order by query, query_mode, scale
 
