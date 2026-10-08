@@ -50,7 +50,8 @@ PGBENCH_SCALES="800 1200" # In-mem vs light disk access (assuming 16GB RAM)
 PGBENCH_INIT_FLAGS="--foreign-keys -q --fillfactor 80"
 PGBENCH_PROTOCOLS="prepared" # simple|extended|prepared
 PGBENCH_PARTITIONS="0"
-TEST_LOOPS=1 # To try to offset the effects of first pg version benefitting from a more better thermal / scaling / SSD trim situation
+PGBENCH_RAND_SEED="time"  # Can set to a number for more repeatability, but as docs say "Use wisely."
+TEST_LOOPS=3 # To try to offset the effects of first pg version benefitting from a more better thermal / scaling / SSD trim situation
 DISABLE_AUTOVACUUM=1 # To reduce randomness. Should combine with a bit of fillfactor in init flags to reduce write tx degradation for long test runs
 CREATE_EXTRA_INDEX=1 # Create an additional index on pgbench_account (bid) to look a bit more "real life"
 SLEEP_BETWEEN_RUNS=300 # To ease monitoring + possibly offset CPU "turbo" mode effects, favouring 1st tests
@@ -173,8 +174,11 @@ i=0
 for BINDIR in "${BINDIRS[@]}" ; do
   PGVER_MAJOR=${PGVER_MAJORS[i]}
   if [ -e "${DATADIR}/pg${PGVER_MAJOR}/postmaster.pid" ]; then
-    echo "Stopping / cleaning up ${DATADIR}/pg${PGVER_MAJOR} ..."
+    echo "Stopping up ${DATADIR}/pg${PGVER_MAJOR} ..."
     $BINDIR/pg_ctl --wait -D ${DATADIR}/pg${PGVER_MAJOR} stop -m i
+  fi
+  if [ -d "${DATADIR}/pg${PGVER_MAJOR}" ]; then
+    echo "Cleaning up ${DATADIR}/pg${PGVER_MAJOR} ..."
     rm -rf ${DATADIR}/pg${PGVER_MAJOR}
   fi
   i=$((i+1))
@@ -293,9 +297,9 @@ for BINDIR in "${BINDIRS[@]}" ; do
     echo -e "\n*** Testing query model: $QUERY_MODE with Postgres $PGVER_MAJOR protocol $PROTOCOL partitions $PARTITIONS scale $SCALE ***\n"
 
     echo "Running the timed query test"
-    echo "pgbench --random-seed 666 -n -P 30 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -t $PGBENCH_TRANSACTIONS $FLAGS \"$CONNSTR_TESTDB\" &> $LOGDIR/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log"
+    echo "pgbench --random-seed $PGBENCH_RAND_SEED -n -P 30 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -t $PGBENCH_TRANSACTIONS $FLAGS \"$CONNSTR_TESTDB\" &> $LOGDIR/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log"
     TEST_LOOP_START_TIME=$(date +%s)
-    $PGBENCH --random-seed 666 -n -P 30 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -t $PGBENCH_TRANSACTIONS $FLAGS "$CONNSTR_TESTDB" &> $LOGDIR/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log
+    $PGBENCH --random-seed $PGBENCH_RAND_SEED -n -P 30 -M $PROTOCOL -j $PGBENCH_JOBS -c $PGBENCH_CLIENTS -t $PGBENCH_TRANSACTIONS $FLAGS "$CONNSTR_TESTDB" &> $LOGDIR/pgbench_testset_pg_${SERVER_VERSION_NUM}_q_${QUERY_MODE}_c_${PGBENCH_CLIENTS}_s_${SCALE}_p_${PARTITIONS}_prot_${PROTOCOL}_loop_${loop_count}.log
     TEST_LOOP_END_TIME=$(date +%s)
     LOOP_DUR_S=$((TEST_LOOP_END_TIME-TEST_LOOP_START_TIME))
 
