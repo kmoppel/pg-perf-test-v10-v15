@@ -53,7 +53,7 @@ PGBENCH_PARTITIONS="0"
 PGBENCH_RAND_SEED="time"  # Can set to a number for more repeatability, but as docs say "Use wisely."
 TEST_LOOPS=3 # To try to offset the effects of first pg version benefitting from a more better thermal / scaling / SSD trim situation
 DISABLE_AUTOVACUUM=1 # To reduce randomness. Should combine with a bit of fillfactor in init flags to reduce write tx degradation for long test runs
-CREATE_EXTRA_INDEX=1 # Create an additional index on pgbench_account (bid) to look a bit more "real life"
+CREATE_EXTRA_INDEXES=1 # Create additional indexes on pgbench_account.bid + pgbench_history.mtime to try to look a bit more "real life"
 SLEEP_BETWEEN_RUNS=300 # To ease monitoring + possibly offset CPU "turbo" mode effects, favouring 1st tests
 
 CPUS=`nproc`
@@ -276,10 +276,12 @@ for BINDIR in "${BINDIRS[@]}" ; do
       fi
       date
 
-      if [ "$CREATE_EXTRA_INDEX" -gt 0 ]; then
-        echo "Creating an extra index on bid ..." # Try to be a bit more closer to real life
+      if [ "$CREATE_EXTRA_INDEXES" -gt 0 ]; then
+        echo "Creating extra indexes ..."
         echo "create index pgbench_accounts_bid_idx on pgbench_accounts(bid);"
         exec_sql "create index pgbench_accounts_bid_abalance_idx on pgbench_accounts(bid);"
+        echo "create index pgbench_history_mtime on pgbench_history(mtime);"
+        exec_sql "create index pgbench_history_mtime on pgbench_history(mtime);"
       fi
     else
       echo "Reusing existing test data for PGVER $PGVER_MAJOR as not yet mutated ..."
