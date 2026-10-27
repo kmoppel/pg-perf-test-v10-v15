@@ -8,6 +8,12 @@
 #    remote host, owned by the "postgres" user.
 # 3) Creates a "logs" directory in test "home" i.e. pg-perf-test-v10-v15
 #
+# 4) Reserves 40GB of huge pages (2MB each) if the host has > 190GB RAM,
+#    persisted in /etc/sysctl.d/99-hugepages.conf (applied on boot by
+#    systemd-sysctl on Debian 13 / Ubuntu 26.04)
+# 5) Starts run_pgbench_testset.sh in a detached tmux session named "bench"
+#    (as postgres; the session stays open after the script finishes)
+#
 # Usage:
 #   PS! Assuming CWD is Github root for pg-perf-test-v10-v15
 #   ansible-playbook -i $HOST_IP, -u pgspotops ansible/perftest-prep.yml
@@ -58,6 +64,7 @@
       ansible.builtin.apt:
         name:
           - rsync
+          - tmux
           - postgresql-18
           - postgresql-19
         state: present
@@ -68,6 +75,16 @@
         name: postgresql
         state: stopped
         enabled: false
+
+    - name: Activate ~40GB of huge pages for SB on hosts with > 190GB RAM
+      ansible.posix.sysctl:
+        name: vm.nr_hugepages
+        value: "20000"
+        sysctl_file: /etc/sysctl.d/99-hugepages.conf
+        state: present
+        sysctl_set: true
+        reload: true
+      when: ansible_memtotal_mb > 190 * 1024
 
     - name: Ensure destination directory exists and is owned by postgres
       ansible.builtin.file:
@@ -104,3 +121,42 @@
         owner: postgres
         group: postgres
         mode: "0755"
+
+    - name: Check that ~/.connstr_resultsdb exists on the Ansible host
+      ansible.builtin.stat:
+        path: ~/.connstr_resultsdb
+      delegate_to: localhost
+      become: false
+      register: connstr_file
+
+    - name: Abort if ~/.connstr_resultsdb is missing
+      ansible.builtin.assert:
+        that: connstr_file.stat.exists
+        fail_msg: "~/.connstr_resultsdb not found on the Ansible host"
+
+    - name: Set CONNSTR_RESULTSDB in run_pgbench_testset.sh from ~/.connstr_resultsdb
+      ansible.builtin.lineinfile:
+        path: "{{ project_dest_dir }}/run_pgbench_testset.sh"
+        regexp: '^CONNSTR_RESULTSDB='
+        line: "CONNSTR_RESULTSDB='{{ (lookup('ansible.builtin.file', '~/.connstr_resultsdb') | trim) | replace(\"'\", \"'\\\\''\") }}'"
+      no_log: true
+
+    - name: Check whether tmux session "bench" already exists
+      ansible.builtin.command: tmux has-session -t bench
+      become: true
+      become_user: postgres
+      register: bench_session
+      changed_when: false
+      failed_when: false
+
+    - name: Start run_pgbench_testset.sh in tmux session "bench"
+      # "exec bash" keeps the session alive after the script finishes
+      ansible.builtin.command: >-
+        tmux new-session -d -s bench -c {{ project_dest_dir }}
+        "bash ./run_pgbench_testset.sh 2>&1 | tee run.log; echo; echo run_pgbench_testset.sh exited with ${PIPESTATUS[0]}; exec bash"
+      environment:
+        USER: postgres
+        SHELL: /bin/bash
+      become: true
+      become_user: postgres
+      when: bench_session.rc != 0
