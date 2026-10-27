@@ -20,7 +20,6 @@ declare -a PGVER_MAJORS
 BINDIRS+=("/usr/lib/postgresql/18/bin")
 PGVER_MAJORS+=("18")
 BINDIRS+=("/usr/lib/postgresql/19/bin")
-#BINDIRS+=("/usr/local/pgsql_19beta3/bin")
 PGVER_MAJORS+=("19")
 
 
@@ -50,7 +49,7 @@ PGBENCH_SCALES="800 1200" # In-mem vs light disk access (assuming 16GB RAM)
 PGBENCH_INIT_FLAGS="--foreign-keys -q --fillfactor 80"
 PGBENCH_PROTOCOLS="prepared" # simple|extended|prepared
 PGBENCH_PARTITIONS="0"
-PGBENCH_RAND_SEED="time"  # Can set to a number for more repeatability, but as docs say "Use wisely."
+PGBENCH_RAND_SEED="666"  # Default "time". Can set to a number for more repeatability, but as docs say "Use wisely."
 TEST_LOOPS=3 # To try to offset the effects of first pg version benefitting from a more better thermal / scaling / SSD trim situation
 DISABLE_AUTOVACUUM=1 # To reduce randomness. Should combine with a bit of fillfactor in init flags to reduce write tx degradation for long test runs
 CREATE_EXTRA_INDEXES=1 # Create additional indexes on pgbench_account.bid + pgbench_history.mtime to try to look a bit more "real life"
@@ -85,7 +84,7 @@ if [ $PGBENCH_JOBS -gt 1 ] ; then
 else
   CLIENTS+=("$CPUS")
 fi
-TRANSACTIONS+=(10000000) # 10m
+TRANSACTIONS+=(15000000) # 15m
 IS_MUTATING+=(0)  # Only re-init data if mutated
 
 QUERY_MODES+=("select-only-batch")
