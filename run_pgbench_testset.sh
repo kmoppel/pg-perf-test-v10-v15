@@ -80,7 +80,7 @@ declare -a IS_MUTATING  # To re-init pgbench only when there have been changes. 
 QUERY_MODES+=("select-only")
 QUERY_FLAGS+=("--select-only")
 if [ $PGBENCH_JOBS -gt 1 ] ; then
-  CLIENTS+=("$((CPUS-PGBENCH_JOBS-1))")
+  CLIENTS+=("$((CPUS-PGBENCH_JOBS))")
 else
   CLIENTS+=("$CPUS")
 fi
@@ -89,7 +89,7 @@ IS_MUTATING+=(0)  # Only re-init data if mutated
 
 QUERY_MODES+=("select-only-batch")
 QUERY_FLAGS+=("-f batch_read.sql")
-CLIENTS+=("$((CPUS/2-PGBENCH_JOBS))")
+CLIENTS+=("$((CPUS/2))")
 TRANSACTIONS+=(1000000) # 1m
 IS_MUTATING+=(0)  # Only re-init data if mutated
 #
@@ -102,7 +102,7 @@ IS_MUTATING+=(0)  # Only re-init data if mutated
 QUERY_MODES+=("skip-some-updates")
 QUERY_FLAGS+=("--skip-some-updates")
 if [ $PGBENCH_JOBS -gt 1 ] ; then
-  CLIENTS+=("$((CPUS-PGBENCH_JOBS-1))")
+  CLIENTS+=("$((CPUS-PGBENCH_JOBS))")
 else
   CLIENTS+=("$CPUS")
 fi
